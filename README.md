@@ -1,0 +1,4 @@
+I built this because I kept manually checking what's trending on YouTube and eyeballing which videos were actually punching above their weight — not just racking up views, but getting real engagement. So I automated it.
+Every day, YouTrend pulls the top 50 trending videos, calculates an engagement rate for each one ((likes + comments) / views) * 100, and then hands the title, description, and tags off to GPT-4o-mini to figure out what category the video actually belongs to and tag it with the trend it's riding. Everything lands in an Airtable log, so over time I get a running dataset of what's trending, why it's working, and how that shifts day to day.
+Stack: n8n (orchestration) → YouTube Data API v3 (ingestion) → OpenAI (classification) → Airtable (storage)
+Runs: once a day, fully hands-off.
