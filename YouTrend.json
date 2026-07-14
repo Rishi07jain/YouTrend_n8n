@@ -1,0 +1,208 @@
+{
+  "name": "YouTrend",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 9
+            }
+          ]
+        }
+      },
+      "id": "6c29e816-f01e-4f44-adb7-110b6c56ca76",
+      "name": "Daily Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        112,
+        288
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://www.googleapis.com/youtube/v3/videos",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "part",
+              "value": "snippet,statistics"
+            },
+            {
+              "name": "chart",
+              "value": "mostPopular"
+            },
+            {
+              "name": "videoCategoryId",
+              "value": "24"
+            },
+            {
+              "name": "maxResults",
+              "value": "50"
+            },
+            {
+              "name": "regionCode",
+              "value": "US"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "7694f6e6-bfdd-4c4f-a6c8-71290a429b58",
+      "name": "Get Trending Videos (YouTube API)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        336,
+        288
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "alwaysOutputData": true,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ---------------------------------------------\n// YouTrend: Metrics Evaluation Code Node\n// Input: raw YouTube videos.list response (1 item, .items = array)\n// Output: one n8n item per video with cleaned metrics\n// ---------------------------------------------\n\nconst response = $input.first().json;\nconst videos = response.items || [];\n\nconst results = [];\n\nfor (const video of videos) {\n  try {\n    const snippet = video.snippet || {};\n    const stats = video.statistics || {};\n\n    // Safely parse numeric stats, defaulting missing/hidden counts to 0\n    const viewCount = parseInt(stats.viewCount, 10) || 0;\n    const likeCount = parseInt(stats.likeCount, 10) || 0;\n    const commentCount = parseInt(stats.commentCount, 10) || 0;\n\n    // Avoid divide-by-zero: if viewCount is 0, engagementRate is 0\n    const engagementRate = viewCount > 0\n      ? ((likeCount + commentCount) / viewCount) * 100\n      : 0;\n\n    results.push({\n      json: {\n        videoId: video.id || '',\n        title: (snippet.title || '').trim(),\n        description: (snippet.description || '').slice(0, 1000), // cap length for AI prompt\n        tags: snippet.tags || [],\n        viewCount,\n        likeCount,\n        commentCount,\n        engagementRate: Number(engagementRate.toFixed(4)),\n        publishedAt: snippet.publishedAt || null\n      }\n    });\n  } catch (err) {\n    // Never let one malformed video break the whole batch\n    results.push({\n      json: {\n        videoId: video.id || 'UNKNOWN',\n        error: `Failed to process video: ${err.message}`\n      }\n    });\n  }\n}\n\nreturn results;"
+      },
+      "id": "ebbe8742-74ee-4ece-bc1a-d484083e598c",
+      "name": "Calculate Engagement Metrics",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        560,
+        288
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "20cdadc2-bf2d-4198-8865-98df5ef377d2",
+      "name": "AI Semantic Tagging (OpenAI)",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1.8,
+      "position": [
+        784,
+        288
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 8000,
+      "credentials": {},
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ---------------------------------------------\n// Merge OpenAI JSON output back with the metrics item\n// and guard against malformed/missing AI JSON\n// ---------------------------------------------\nconst metrics = $('Calculate Engagement Metrics').item.json;\nconst aiRaw = $json.message?.content ?? $json.content ?? $json.text ?? '{}';\n\nlet parsed;\ntry {\n  parsed = typeof aiRaw === 'string' ? JSON.parse(aiRaw) : aiRaw;\n} catch (e) {\n  parsed = { macro_category: 'Uncategorized', semantic_tags: [] };\n}\n\nreturn [{\n  json: {\n    videoId: metrics.videoId,\n    title: metrics.title,\n    viewCount: metrics.viewCount,\n    likeCount: metrics.likeCount,\n    commentCount: metrics.commentCount,\n    engagementRate: metrics.engagementRate,\n    publishedAt: metrics.publishedAt,\n    macro_category: parsed.macro_category || 'Uncategorized',\n    semantic_tags: Array.isArray(parsed.semantic_tags) ? parsed.semantic_tags : []\n  }\n}];"
+      },
+      "id": "40ccfd2f-7955-4fe0-a9ae-a39e776169fb",
+      "name": "Merge AI Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        992,
+        288
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "base": {
+          "__rl": true,
+          "value": "YOUR_AIRTABLE_BASE_ID",
+          "mode": "list"
+        },
+        "table": {
+          "__rl": true,
+          "value": "YouTrend Log",
+          "mode": "list"
+        }
+      },
+      "id": "5f3a5b5d-ddb3-4d06-a28d-acfe03c9c9ad",
+      "name": "Log to Airtable",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [
+        1216,
+        288
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Catches items that errored out of the YouTube or OpenAI nodes\n// so failures are visible in the execution log instead of silently dropped.\nconst item = $input.first().json;\nconsole.log('Pipeline error captured:', JSON.stringify(item));\nreturn [{ json: { ...item, pipelineStage: 'error', loggedAt: new Date().toISOString() } }];"
+      },
+      "id": "18bd67c2-5751-4a50-8c1f-81189add162d",
+      "name": "Error Logger",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        784,
+        528
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Daily Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Trending Videos (YouTube API)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Trending Videos (YouTube API)": {
+      "main": [
+        [
+          {
+            "node": "Calculate Engagement Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error Logger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge AI Output": {
+      "main": [
+        [
+          {
+            "node": "Log to Airtable",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "a1ef6775-3a3e-4307-9c58-d4bfc697fd25",
+  "meta": {
+    "instanceId": "b2a1cc7e0ab9288e8245cdb6395a66eb87db78c44a448f82e5d3e6ba6cd094cd"
+  },
+  "nodeGroups": [],
+  "id": "xv0NeAOZMQ5rvtcS",
+  "tags": []
+}
